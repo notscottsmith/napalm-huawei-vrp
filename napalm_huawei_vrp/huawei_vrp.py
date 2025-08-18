@@ -31,7 +31,6 @@ from napalm.base.helpers import mac
 import napalm.base.constants as C
 
 from datetime import datetime
-from diffplus import IndentedConfig, IncrementalDiff
 from napalm.base import NetworkDriver
 from napalm.base.netmiko_helpers import netmiko_args
 from napalm.base.exceptions import (
@@ -58,7 +57,7 @@ IPV6_ADDR_REGEX_3 = (
     "[0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}"
 )
 INTERFACE_REGEX = (
-    r"(?:[0-9]*GE[0-9\/\.]+)|(?:LoopBack\d+)|(?:Eth-Trunk[0-9\.]+)|(?:Vlanif[0-9\.]+)"
+    r"(?:[0-9]*X?GE[0-9\/\.]+)|(?:LoopBack\d+)|(?:Eth-Trunk[0-9\.]+)|(?:Vlanif[0-9\.]+)"
 )
 
 # Should validate IPv6 address using an IP address library after matching with this regex
@@ -137,9 +136,6 @@ class VRPDriver(NetworkDriver):
         self.prompt_quiet_changed = False
         # Track whether 'file prompt quiet' is known to be configured
         self.prompt_quiet_configured = None
-
-        # Contextual diff computation mode
-        self.contextual_diff = optional_args.get("contextual_diff", False)
 
     # verified
     def open(self):
@@ -475,8 +471,6 @@ class VRPDriver(NetworkDriver):
         """Compare candidate config with running."""
         if self.loaded:
             if not self.replace:
-                if self.contextual_diff:
-                    return self._get_contextual_diff()
                 return self._get_merge_diff()
                 # return self.merge_candidate
             diff = self._get_diff(self.replace_file.split("/")[-1])
@@ -1911,7 +1905,6 @@ class VRPDriver(NetworkDriver):
 
     # developing
     def get_vlans(self):
-        pass
         """
         {
             "1": {
@@ -1938,6 +1931,51 @@ class VRPDriver(NetworkDriver):
             }
         }
         """
+        vlans = {}
+        re_vlans_with_name = r"^vlan\s(?P<number>\d+)\n\s+(?P<nametype>name|description)\s+(?P<name>.*)$"
+        re_vlan_interfaces = r"^(?P<number>\d+).*(UT:|TG:)((\w+/\d+/\d+)\([UD]\)\s+|(Eth-Trunk\d+)\([UD]\)\s+)+"
+        cmd_vlan_names = "display cur conf vlan"
+        cmd_vlan_interfaces = "display vlan"
+    
+        output_names = self.device.send_command(cmd_vlan_names)
+        output_interfaces = self.device.send_command(cmd_vlan_interfaces)
+        
+
+        if not output_names:
+            return vlans
+        
+                
+        #Get vlan names from config and add to vlans dic. 
+        #If name not set use description for name. See regex 're_vlans_with_name'
+        matches = re.finditer(re_vlans_with_name, output_names, re.MULTILINE)
+
+        for m in matches:
+            vlan = {}
+            number = m.group('number')
+            name = m.group('name').replace('"',"").rstrip()
+            #Include id as interger in vlan dictionary to turn interactions easier 
+            #vlan['id'] = int(number) 
+            vlan['name'] = name
+            vlans[number] = vlan    
+        
+        #Get interfaces what vlan is configured. Ignore tag or untag config
+        match_interfaces = re.compile(INTERFACE_REGEX)
+        matches = re.finditer(re_vlan_interfaces, output_interfaces, re.MULTILINE)
+
+        for m in matches:
+            interfaces = match_interfaces.findall(m.group(0))
+            interfaces = [self.interface_format_conversion(iface) for iface in interfaces]
+            n = m.group('number')
+        
+            if vlans.get(n) is None:
+                #Add vlans without name and description 
+                vlans[n] = {'name': 'VLAN ' + n, 'interfaces': interfaces}
+            else:
+                vlans[n]['interfaces'] = interfaces
+
+        return vlans
+
+
 
     @staticmethod
     def _separate_section(separator, content):
@@ -2076,13 +2114,6 @@ class VRPDriver(NetworkDriver):
                 if line[0].strip() != "!":
                     diff.append(line)
         return "\n".join(diff)
-
-    def _get_contextual_diff(self):
-        running_config = self.get_config(retrieve="running")["running"]
-        running_config = IndentedConfig(running_config, sanitize=True)
-        merge_candidate = IndentedConfig(self.merge_candidate, sanitize=True)
-        diff = IncrementalDiff(merge_candidate, running_config)
-        return str(diff)
 
     def _get_diff(self, filename=None):
         """Get a diff between running config and a proposed file."""
@@ -2227,14 +2258,18 @@ class VRPDriver(NetworkDriver):
 
         re_giga = r"^GE(?P<port>[A-Za-z0-9\/\.]+)"
         re_ether = r"Ether(?P<port>\d[A-Za-z0-9\/\.]+)"
+        re_tengiga = r"^XGE(?P<port>[A-Za-z0-9\/\.]+)"
 
         match_giga = re.search(re_giga, interface, flags=re.M)
         match_ether = re.search(re_ether, interface, flags=re.M)
+        match_tengiga = re.search(re_tengiga,interface,flags=re.M)
 
         if match_giga:
             return "GigabitEthernet" + match_giga.group("port")
         elif match_ether:
             return "Ethernet" + match_ether.group("port")
+        elif match_tengiga:
+            return "XGigabitEthernet" + match_tengiga.group("port")
         else:
             return interface
 
