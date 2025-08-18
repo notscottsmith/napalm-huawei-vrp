@@ -887,17 +887,11 @@ class VRPDriver(NetworkDriver):
         return results
 
     # develop
-    # develop
-    def get_lldp_neighbors_detail(self, interface=""):
     def get_lldp_neighbors_detail(self, interface=""):
         pass
         """
-        """
-        Return a detailed view of the LLDP neighbors as a dictionary.
         Return a detailed view of the LLDP neighbors as a dictionary.
         Sample output:
-        Sample output:
-        {
         {
             '100GE1/0/1': [
                 {
@@ -912,12 +906,8 @@ class VRPDriver(NetworkDriver):
                 }
             ]
         }
-        }
         """
-        """
-        lldp_neighbors = {}
         lldp_neighbors_detail = {}
-        return lldp_neighbors
 
         command = "display lldp neighbor"
         if interface:
