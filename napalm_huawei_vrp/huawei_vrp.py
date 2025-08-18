@@ -619,9 +619,11 @@ class VRPDriver(NetworkDriver):
             intf_state = match_intf.group("intf_state")
             is_enabled = bool("up" in intf_state.lower())
 
-            protocol = match_proto.group("protocol")
-            is_up = bool("up" in protocol.lower())
-
+            is_up = False
+            if match_proto:
+                protocol = match_proto.group("protocol")
+                is_up = bool("up" in protocol.lower())
+            
             match_mac = re.search(re_mac, interface, flags=re.M)
             if match_mac:
                 mac_address = match_mac.group("mac_address")
