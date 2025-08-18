@@ -11,7 +11,7 @@ __author__ = "Locus Li <locus@byto.top>"
 
 setup(
     name="napalm-huawei-vrp",
-    version="v1.2.0",
+    version="v1.3.0",
     packages=find_packages(exclude=("test*",)),
     test_suite="test_base",
     author="Locus Li, Michael Alvarez",
@@ -25,10 +25,10 @@ setup(
         "License :: OSI Approved :: Apache Software License",
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.6",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
         "Operating System :: POSIX :: Linux",
         "Operating System :: MacOS",
     ],
