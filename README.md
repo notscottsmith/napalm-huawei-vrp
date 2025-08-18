@@ -35,7 +35,9 @@ The driver is under development and iteration.
 |  get_interfaces()           |  Get interface information |
 |  get_interfaces_ip()        |  Get interface IP information  |
 |  get_interfaces_counters()  |  Get interface counters  |
+|  get_vlans()        |  Get VLAN information  |
 |  get_lldp_neighbors()       |  Fetch LLDP neighbor information |
+|  get_lldp_neighbors_detail()       |  Fetch LLDP neighbor detail information |
 
 
 ### Config
