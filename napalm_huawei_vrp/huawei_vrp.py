@@ -2003,7 +2003,18 @@ class VRPDriver(NetworkDriver):
 
     # developing
     def get_vlans(self):
+        # Command to display all VLAN information
+        command = "display vlan"
+
+        # Send the command to the device
+        output = self.device.send_command(command)
+
+        # Return the formatted dict of VLANs
+        return parse_display_vlan(output)
+
+    def parse_display_vlan(output: str) -> dict[int, dict]:
         """
+        Parse Huawei VRP 'display vlan' output into NAPALM get_vlans() format:
         {
             "1": {
                 "name": "default",
@@ -2029,50 +2040,128 @@ class VRPDriver(NetworkDriver):
             }
         }
         """
-        vlans = {}
-        re_vlans_with_name = r"^vlan\s(?P<number>\d+)\n\s+(?P<nametype>name|description)\s+(?P<name>.*)$"
-        re_vlan_interfaces = r"^(?P<number>\d+).*(UT:|TG:)((\w+/\d+/\d+)\([UD]\)\s+|(Eth-Trunk\d+)\([UD]\)\s+)+"
-        cmd_vlan_names = "display cur conf vlan"
-        cmd_vlan_interfaces = "display vlan"
-    
-        output_names = self.device.send_command(cmd_vlan_names)
-        output_interfaces = self.device.send_command(cmd_vlan_interfaces)
-        
 
-        if not output_names:
-            return vlans
-        
-                
-        #Get vlan names from config and add to vlans dic. 
-        #If name not set use description for name. See regex 're_vlans_with_name'
-        matches = re.finditer(re_vlans_with_name, output_names, re.MULTILINE)
+        vlans: dict[int, dict] = {}
+        lines = output.splitlines
 
-        for m in matches:
-            vlan = {}
-            number = m.group('number')
-            name = m.group('name').replace('"',"").rstrip()
-            #Include id as interger in vlan dictionary to turn interactions easier 
-            #vlan['id'] = int(number) 
-            vlan['name'] = name
-            vlans[number] = vlan    
-        
-        #Get interfaces what vlan is configured. Ignore tag or untag config
-        match_interfaces = re.compile(INTERFACE_REGEX)
-        matches = re.finditer(re_vlan_interfaces, output_interfaces, re.MULTILINE)
+        # Quick short-circuit if device reports zero VLANs
+        m_total = re.search(r"The total number of VLANs is:\s*(\d+)", output)
 
-        for m in matches:
-            interfaces = match_interfaces.findall(m.group(0))
-            interfaces = [self.interface_format_conversion(iface) for iface in interfaces]
-            n = m.group('number')
-        
-            if vlans.get(n) is None:
-                #Add vlans without name and description 
-                vlans[n] = {'name': 'VLAN ' + n, 'interfaces': interfaces}
-            else:
-                vlans[n]['interfaces'] = interfaces
+        if m_total and int(m_total.group(1)) == 0:
+            return {}
+
+        # Helpers
+        def norm_iface_token(tok: str) -> str | None:
+            """Strip TG:/UT: prefix and trailing status like (U)/(D)."""
+            tok = tok.strip(",")
+            tok = re.sub(r"^(?:UT:|TG:)", "", tok)      # remove tag prefix if present
+            tok = re.sub(r"\([UD]\)$", "", tok)         # remove status suffix
+            tok = tok.strip()
+
+            # Heuristic: keep tokens that look like interface names (letters + digits/slashes/dashes)
+            if tok and re.search(r"[A-Za-z]", tok):
+                return tok
+
+            return None
+
+        # Find section boundaries
+        # Ports table starts at 'VID  Type    Ports' and ends before the next 'VID  Status'
+        try:
+            ports_hdr_idx = next(i for i, l in enumerate(lines) if re.match(r"\s*VID\s+Type\s+Ports", l))
+        except StopIteration:
+            ports_hdr_idx = -1
+        try:
+            status_hdr_idx = next(i for i, l in enumerate(lines) if re.match(r"\s*VID\s+Status\s+Property", l))
+        except StopIteration:
+            status_hdr_idx = -1
+
+        # Parse Ports table (interfaces)
+        if ports_hdr_idx != -1:
+            current_vid: int | None = None
+
+            for i in range(ports_hdr_idx + 1, len(lines) if status_hdr_idx == -1 else status_hdr_idx):
+                line = lines[i].rstrip()
+
+                if not line or re.match(r"^-{5,}$", line):
+                    continue
+
+                # New VLAN row: "<vid>  <type>  <ports...>"
+                m = re.match(r"^\s*(\d+)\s+\S+\s+(.*\S)\s*$", line)
+
+                if m:
+                    current_vid = int(m.group(1))
+                    ports_part = m.group(2)
+                    vlans.setdefault(current_vid, {"name": f"VLAN {current_vid:04d}", "interfaces": []})
+                    tokens = ports_part.split()
+
+                    for tok in tokens:
+                        iface = norm_iface_token(tok)
+
+                        if iface:
+                            vl = vlans[current_vid]["interfaces"]
+
+                            if iface not in vl:
+                                vl.append(iface)
+
+                    continue
+
+                # Continuation line of interfaces for the current VID (indented)
+                if current_vid is not None and re.match(r"^\s+\S", line):
+                    tokens = line.split()
+
+                    for tok in tokens:
+                        iface = norm_iface_token(tok)
+
+                        if iface:
+                            vl = vlans[current_vid]["interfaces"]
+
+                            if iface not in vl:
+                                vl.append(iface)
+
+                    continue
+
+                # Anything else ends current VID block
+                current_vid = None
+
+        # Parse Status/Description table (names)
+        if status_hdr_idx != -1:
+            for i in range(status_hdr_idx + 1, len(lines)):
+                line = lines[i].rstrip()
+
+                if not line or re.match(r"^-{5,}$", line):
+                    continue
+
+                # Pattern: "<vid>  enable  default  enable  disable    <Description...>"
+                # Capture VID and the trailing Description column (if any)
+                m = re.match(
+                    r"^\s*(\d+)\s+\S+\s+\S+\s+\S+\s+\S+\s*(.*\S)?\s*$",
+                    line
+                )
+
+                if m:
+                    vid = int(m.group(1))
+                    desc = (m.group(2) or "").strip()
+
+                    if vid not in vlans:
+                        vlans[vid] = {"name": f"VLAN {vid:04d}", "interfaces": []}
+
+                    # Prefer a non-empty description as name
+                    if desc:
+                        vlans[vid]["name"] = desc
+
+        # Ensure deterministic interface order (preserve first-seen order, no dups)
+        for v in vlans.values():
+            seen = set()
+            ordered = []
+
+            for iface in v["interfaces"]:
+                if iface not in seen:
+                    seen.add(iface)
+                    ordered.append(iface)
+
+            v["interfaces"] = ordered
 
         return vlans
-
 
 
     @staticmethod
