@@ -27,7 +27,11 @@ import os
 import tempfile
 import uuid
 import hashlib
-from napalm.base.helpers import mac
+from napalm.base.helpers import (
+    textfsm_extractor,
+    mac,
+)
+
 import napalm.base.constants as C
 
 from datetime import datetime
@@ -39,6 +43,7 @@ from napalm.base.exceptions import (
     CommandErrorException,
     CommitError,
 )
+from collections import defaultdict
 from .utils.utils import pretty_mac, SafeList
 
 # Easier to store these as constants
@@ -2002,38 +2007,27 @@ class VRPDriver(NetworkDriver):
         return local_users
 
     # developing
-    @staticmethod
-    def parse_display_vlan(self, output: str) -> dict[int, dict]:
+    def get_vlans(self):
         """
-        Parse Huawei VRP 'display vlan' output into NAPALM get_vlans() format:
-        {
-            "1": {
-                "name": "default",
-                "interfaces": [
-                    "GigabitEthernet0/9",
-                    "GigabitEthernet0/12",
-                    "GigabitEthernet0/22",
-                    "GigabitEthernet0/25",
-                    "TenGigabitEthernet0/1",
-                    "TenGigabitEthernet0/2"
-                ]
-            },
-            "603": {
-                "name": "Kuku",
-                "interfaces": [
-                    "GigabitEthernet0/10"
-                ]
-            "800": {
-                "name": "coopero",
-                "interfaces": [
-                    "GigabitEthernet0/19"
-                ]
-            }
-        }
+        Implementation of NAPALM method 'get_vlans'. This is used to retrieve all vlan
+        information. 
+
+        :return: Returns a dictionary of dictionaries. The keys for the first dictionary will be the
+        vlan_id of the vlan. The inner dictionary will containing the following data for
+        each vlan:
+         * name (text_type)
+         * interfaces (list)
         """
 
-        vlans: dict[int, dict] = {}
-        lines = output.splitlines
+        # Set an empty response
+        vlans = {}
+
+        # Command to display all VLAN information
+        command = "display vlan"
+
+        # Send the command to the device
+        output = self.device.send_command(command)
+        lines = output.splitlines()
 
         # Quick short-circuit if device reports zero VLANs
         m_total = re.search(r"The total number of VLANs is:\s*(\d+)", output)
@@ -2153,16 +2147,6 @@ class VRPDriver(NetworkDriver):
             v["interfaces"] = ordered
 
         return vlans
-
-    def get_vlans(self):
-        # Command to display all VLAN information
-        command = "display vlan"
-
-        # Send the command to the device
-        output = self.device.send_command(command)
-
-        # Return the formatted dict of VLANs
-        return self.parse_display_vlan(self, output)
 
     @staticmethod
     def _separate_section(separator, content):
