@@ -2002,16 +2002,6 @@ class VRPDriver(NetworkDriver):
         return local_users
 
     # developing
-    def get_vlans(self):
-        # Command to display all VLAN information
-        command = "display vlan"
-
-        # Send the command to the device
-        output = self.device.send_command(command)
-
-        # Return the formatted dict of VLANs
-        return parse_display_vlan(output)
-
     def parse_display_vlan(output: str) -> dict[int, dict]:
         """
         Parse Huawei VRP 'display vlan' output into NAPALM get_vlans() format:
@@ -2163,6 +2153,15 @@ class VRPDriver(NetworkDriver):
 
         return vlans
 
+    def get_vlans(self):
+        # Command to display all VLAN information
+        command = "display vlan"
+
+        # Send the command to the device
+        output = self.device.send_command(command)
+
+        # Return the formatted dict of VLANs
+        return self.parse_display_vlan(output)
 
     @staticmethod
     def _separate_section(separator, content):
